@@ -113,6 +113,26 @@ class RegressionTest(unittest.TestCase):
         intent=rules("I'm paying $48 for dinner tonight")
         self.assertEqual((intent.kind,intent.task,intent.cents),('doing','pay',None))
 
+    def test_past_participles_and_continuous_variations_share_task_types(self):
+        examples=[('I have driven today','did','drive'),("I've driven us home",'did','drive'),
+                  ('I driven yesterday','did','drive'),('ive already driven','did','drive'),
+                  ('I had cooked dinner','did','cooking'),("I've done the dishes",'did','dishes'),
+                  ('I have taken out the trash','did','trash'),('I had gotten the uber','did','uber'),
+                  ('I have mopped the floor','did','mopping'),('I emptied the bins','did','trash'),
+                  ("I've been cooking dinner",'doing','cooking'),('I have been driving','doing','drive'),
+                  ('I was cooking last night','did','cooking'),("I'd been cleaning the bathroom",'did','bathroom')]
+        for text,kind,task in examples:
+            with self.subTest(text=text):
+                result=rules(text)
+                self.assertIsNotNone(result)
+                self.assertEqual((result.kind,result.task),(kind,task))
+
+    def test_registered_tasks_match_regular_verb_variations(self):
+        for text,task in [('I washed the car','wash car'),('im washing the car','wash car'),
+                          ('I walked the dog','walk dog'),('I have cleaned the pool','clean pool')]:
+            result=rules(text,[task])
+            self.assertEqual(result.task,task)
+
     def test_chore_questions(self):
         for phrase,task in [("who's cooking?",'cooking'),('whose turn to cook?','cooking'),
                             ("who's next for uber?",'uber'),('who is up next for laundry?','laundry')]:

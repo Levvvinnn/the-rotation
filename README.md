@@ -84,7 +84,8 @@ Commands work in servers. Participant pickers expire after five minutes. Other b
 
 - `ROTATION_DB`: SQLite path, default `rotation.db` beside `bot.py`. On a hosted machine, put it on persistent disk. Back up this file to retain history. Run one bot process against it.
 - `ROTATION_TIMEZONE`: IANA timezone for past-day phrases, default UTC.
-- `ANTHROPIC_API_KEY` **and** `ROTATION_MODEL`: optional API key and an available Anthropic model ID. Both must be set to enable the fallback. Relevant messages that built-in rules cannot parse are sent to Anthropic; leave both blank to keep parsing local. API errors fall back to the local rules.
+- `GEMINI_API_KEY`: enables the Gemini fallback for slang, typos, and paraphrases such as “I whipped up dinner” or “dinner was on me”. `GEMINI_MODEL` defaults to `gemini-2.5-flash-lite`. Only relevant messages missed by local rules are sent to Google, along with known task names; Discord IDs and history are not included. Output must meet the intent schema and confidence threshold, and money amounts must match the message. API errors leave local recognition working. See [Google's structured output documentation](https://ai.google.dev/gemini-api/docs/generate-content/structured-output).
+- `ANTHROPIC_API_KEY` **and** `ROTATION_MODEL`: legacy optional fallback, used only if Gemini is not configured. Leave all API keys blank to keep parsing local. Save keys in `.env` or your host's secret settings; `.env` is excluded from Git.
 
 Exact minimum-payment search can take longer for large groups because the general problem is exponential. This bot is designed for friend groups.
 
@@ -104,6 +105,7 @@ rotation/fairness.py      overdue math, odds, weighted selection
 rotation/money.py         cent-safe amounts, splitting, minimum payments
 rotation/wheel.py         weighted wheel GIF renderer
 rotation/understand.py    phrase parsing and optional AI fallback
+rotation/language.py      verb families, conjugations, and custom task phrase normalization
 rotation/store.py         SQLite history, task participants, recent speakers, ledger versions
 rotation/participants.py  name-based participant picker
 tests/                   unit and Discord callback tests

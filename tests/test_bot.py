@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, Mock, patch
 
-with patch.dict(os.environ, {"ROTATION_DB": ":memory:", "ANTHROPIC_API_KEY": ""}):
+with patch.dict(os.environ, {"ROTATION_DB": ":memory:", "ANTHROPIC_API_KEY": "", "GEMINI_API_KEY": ""}):
     import bot
 
 from rotation import money
@@ -23,7 +23,7 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.original_store = bot.store
         bot.store = Store(Path(self.tmp.name) / 'test.db')
-        self.env = patch.dict(os.environ, {'ANTHROPIC_API_KEY': '', 'ROTATION_TIMEZONE': 'America/Phoenix'})
+        self.env = patch.dict(os.environ, {'ANTHROPIC_API_KEY': '', 'GEMINI_API_KEY': '', 'ROTATION_TIMEZONE': 'America/Phoenix'})
         self.env.start()
         self.ana, self.ben, self.cal = person(1, 'Ana'), person(2, 'Ben'), person(3, 'Cal')
         self.channel = NS(id=100, send=AsyncMock(), fetch_message=AsyncMock())
@@ -548,6 +548,16 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.store.events(10,'cooking'),[])
         self.assertEqual(len(bot.store.events(10,'drive')),1)
         self.assertEqual(len(bot.store.events(20,'cooking')),1)
+
+    async def test_participle_and_continuous_messages_react_and_log(self):
+        for i,(text,task) in enumerate([("I've driven today",'drive'),("I've done the dishes",'dishes'),
+                                        ('I have cooked dinner','cooking'),('I was cooking last night','cooking')]):
+            msg=self.message(self.ana,text,mid=900+i)
+            await bot.on_message(msg)
+            msg.add_reaction.assert_awaited_once_with('📝')
+            self.assertIn(task,msg.reply.call_args.args[0])
+        self.assertEqual(len(bot.store.events(10,'drive')),1)
+        self.assertEqual(len(bot.store.events(10,'cooking')),2)
 
     async def test_chat_records_explicit_past_time(self):
         msg = self.message(self.ana, 'I drove last night')
