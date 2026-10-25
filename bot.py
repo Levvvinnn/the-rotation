@@ -153,8 +153,9 @@ def next_turn_summary(task: str, ranked) -> str:
             f"Use `/spin task:{task}` to choose.")
 
 
-def log_confirmation(guild_id: int, task: str, name: str) -> str:
-    return (f"📝 Logged: {discord.utils.escape_markdown(name)} did **{discord.utils.escape_markdown(task)}**.\n"
+def log_confirmation(guild_id: int, task: str, name: str, *, active: bool = False) -> str:
+    action = "is handling" if active else "did"
+    return (f"📝 Logged: {discord.utils.escape_markdown(name)} {action} **{discord.utils.escape_markdown(task)}**.\n"
             + next_turn_summary(task, task_standings(guild_id, task)))
 
 
@@ -162,7 +163,8 @@ def last_done_line(events) -> str:
     if not events:
         return "Last done: no completed turns yet."
     last = max(events, key=lambda event: (event.ts, event.id))
-    return f"Last done: **{discord.utils.escape_markdown(last.user_name)}** · <t:{int(last.ts)}:R>"
+    label = "Current turn" if last.source == "chat-active" else "Last done"
+    return f"{label}: **{discord.utils.escape_markdown(last.user_name)}** · <t:{int(last.ts)}:R>"
 
 
 def task_overview_embeds(guild_id: int) -> list[discord.Embed]:
@@ -354,7 +356,7 @@ async def on_message(message: discord.Message):
     if not intent or not store.claim_message(message.id):
         return
     gid, author = message.guild.id, message.author
-    if intent.kind in ("did", "ask"):
+    if intent.kind in ("did", "doing", "ask"):
         intent.task = normalize_task(intent.task)
 
     if intent.kind == "settle":
@@ -388,12 +390,16 @@ async def on_message(message: discord.Message):
         await message.add_reaction("🤝")
         return
 
-    if intent.kind == "did":
+    if intent.kind in ("did", "doing"):
+        active = intent.kind == "doing"
         people = default_people(message.channel.id, gid, intent.task, {author.id: author.display_name})
         people[author.id] = author.display_name
         store.add_task_people(gid, intent.task, people)
-        store.add(gid, intent.task, author.id, author.display_name, source="chat", message_id=message.id,
-                  ts=occurred_at(message.content, message.created_at.timestamp(), os.environ.get("ROTATION_TIMEZONE", "UTC")))
+        timestamp = message.created_at.timestamp()
+        if not active:
+            timestamp = occurred_at(message.content, timestamp, os.environ.get("ROTATION_TIMEZONE", "UTC"))
+        store.add(gid, intent.task, author.id, author.display_name,
+                  source="chat-active" if active else "chat", message_id=message.id, ts=timestamp)
         try:
             await message.add_reaction("📝")
         except discord.HTTPException:
@@ -403,14 +409,14 @@ async def on_message(message: discord.Message):
             if len(people) < 2:
                 people = {author.id: author.display_name, **recent_people(message.channel.id)}
             if len(people) < 2:
-                await message.reply(log_confirmation(gid, intent.task, author.display_name)
+                await message.reply(log_confirmation(gid, intent.task, author.display_name, active=active)
                                     + f"\n💸 Got {money.fmt(intent.cents)}. Who was it split with? Use `/expense` with friends.",
                                     mention_author=False)
                 return
             line = record_expense(gid, author, people, intent.cents, intent.note, message_id=message.id)
-            text = log_confirmation(gid, intent.task, author.display_name) + "\n" + line
+            text = log_confirmation(gid, intent.task, author.display_name, active=active) + "\n" + line
         else:
-            text = log_confirmation(gid, intent.task, author.display_name)
+            text = log_confirmation(gid, intent.task, author.display_name, active=active)
         await message.reply(text + f"\n-# Not right? React {UNDO_EMOJI} on your original message to undo.", mention_author=False)
         return
 

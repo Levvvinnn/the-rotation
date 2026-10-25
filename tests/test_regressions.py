@@ -90,6 +90,29 @@ class RegressionTest(unittest.TestCase):
                 self.assertIsNotNone(result)
                 self.assertEqual((result.kind,result.task),('did',task))
 
+    def test_current_turn_chat_phrases(self):
+        examples=[('im cooking today','cooking'),("I'm cooking today",'cooking'),('I’m cooking rn','cooking'),
+                  ('I am currently cooking dinner','cooking'),("I'm driving tonight",'drive'),
+                  ('im doing the dishes','dishes'),("I'm taking out the trash",'trash'),
+                  ('im getting the uber home','uber'),("I'm making dinner",'cooking'),
+                  ('I am washing clothes','laundry'),('im cleaning the bathroom','bathroom'),
+                  ('im handling the litter box today','litter box')]
+        for phrase,task in examples:
+            with self.subTest(phrase=phrase):
+                result=rules(phrase,['litter box'])
+                self.assertIsNotNone(result)
+                self.assertEqual((result.kind,result.task),('doing',task))
+
+    def test_current_turn_rejects_negation_questions_and_future_plans(self):
+        for phrase in ["I'm not cooking today",'im not driving',"I'm cooking tomorrow",
+                       'im cooking next Friday', 'am I cooking today?', "I'm cooking today?",
+                       'if im cooking today', '> im cooking today', 'he said im cooking today']:
+            self.assertIsNone(rules(phrase),phrase)
+
+    def test_current_turn_does_not_log_an_unpaid_expense(self):
+        intent=rules("I'm paying $48 for dinner tonight")
+        self.assertEqual((intent.kind,intent.task,intent.cents),('doing','pay',None))
+
     def test_chore_questions(self):
         for phrase,task in [("who's cooking?",'cooking'),('whose turn to cook?','cooking'),
                             ("who's next for uber?",'uber'),('who is up next for laundry?','laundry')]:

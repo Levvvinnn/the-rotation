@@ -192,6 +192,31 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
             msg.add_reaction.assert_awaited_once_with('📝')
             self.assertIn('📝 Logged: Ana did **'+task+'**',msg.reply.call_args.args[0])
 
+    async def test_current_turn_message_reacts_and_replies(self):
+        msg=self.message(self.ana,'im cooking today')
+        await bot.on_message(msg)
+        event=bot.store.events(10,'cooking')[0]
+        self.assertEqual(event.source,'chat-active')
+        self.assertEqual(event.ts,msg.created_at.timestamp())
+        msg.add_reaction.assert_awaited_once_with('📝')
+        self.assertIn('📝 Logged: Ana is handling **cooking**',msg.reply.call_args.args[0])
+        self.assertIn('Current turn: **Ana**',bot.last_done_line([event]))
+        await bot.on_message(msg)
+        self.assertEqual(len(bot.store.events(10,'cooking')),1)
+
+    async def test_current_turn_negative_message_is_ignored(self):
+        msg=self.message(self.ana,'im not cooking today')
+        await bot.on_message(msg)
+        self.assertEqual(bot.store.events(10,'cooking'),[])
+        msg.add_reaction.assert_not_awaited()
+        msg.reply.assert_not_awaited()
+
+    async def test_current_turn_does_not_record_a_speculative_expense(self):
+        msg=self.message(self.ana,"I'm paying $48 for dinner tonight",[self.ben])
+        await bot.on_message(msg)
+        self.assertEqual(len(bot.store.events(10,'pay')),1)
+        self.assertEqual(bot.store.expenses(10),[])
+
     async def test_first_chore_remembers_recent_group_including_never_done(self):
         await bot.on_message(self.message(self.ben,'hello',mid=601))
         await bot.on_message(self.message(self.ana,'I cooked dinner'))

@@ -1,5 +1,6 @@
 """Turn a chat message into one of:
   did     the sender did a task, maybe with an amount ("I paid $48 for dinner")
+  doing   the sender is handling a task now/today ("im cooking today")
   ask     someone asks whose turn it is ("whose turn to drive?")
   settle  the sender paid someone back ("paid you back @Dev", "venmo'd jake $20")
 or nothing.
@@ -27,7 +28,8 @@ TASKS = {
     "uber": ["uber", "lyft", "ride", "rideshare", "ubered", "lyfted"],
     "host": ["host", "hosted", "hosting", "my place", "at mine"],
     "cooking": ["cook", "cooked", "cooking", "made dinner", "made lunch", "made breakfast",
-                "made food", "prepared dinner", "prepared lunch", "prepared breakfast", "prepared food",
+                "made food", "making dinner", "making lunch", "making breakfast", "making food",
+                "preparing dinner", "preparing lunch", "preparing breakfast", "preparing food", "prepared dinner", "prepared lunch", "prepared breakfast", "prepared food",
                 "meal prep", "meal prepped"],
     "dishes": ["dishes", "dish", "dishwasher", "washing up", "washed up"],
     "laundry": ["laundry", "washing clothes", "washed clothes", "folded clothes", "folding clothes"],
@@ -52,6 +54,16 @@ DID_VERBS = (r"(drove|hosted|paid|got|bought|grabbed|covered|took out|did|picked
              r"ubered|lyfted|cooked|made|prepared|washed|cleaned|vacuumed|mopped|swept|watered|walked|fed|"
              r"finished|handled|emptied|folded|ran|booked|called|tidied|hoovered|meal prepped)")
 _did_re = re.compile(rf"\bi(?:'ve|\s+have)?\s+(?:(?:just|already|finally|also)\s+)*{DID_VERBS}\b(.*)", re.I)
+# Support common chat spelling (im / I'm / I am), including short adverbs.
+_active_re = re.compile(
+    r"\bi(?:'m|m|\s+am)\s+(?:(?:currently|just|already|also|actually|still)\s+)*"
+    r"(driving|hosting|cooking|doing|washing|cleaning|vacuuming|mopping|sweeping|watering|walking|"
+    r"feeding|folding|taking out|taking|getting|buying|ordering|grabbing|paying|preparing|making|"
+    r"handling|emptying|tidying|running|booking|calling)\b(.*)", re.I,
+)
+_future_re = re.compile(
+    r"\b(?:tomorrow|next\s+(?:week|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b", re.I,
+)
 _ask_re = re.compile(
     r"\b(?:whose|who'?s|who is|who\s+should)\s+(?:turn|driving|hosting|paying|getting|grabbing|buying|ordering|"
     r"next|up(?:\s+next)?|taking|doing|for|drive|host|pay|get|grab|buy|order|take|do|cooking|cook|cleaning|clean|washing|"
@@ -70,7 +82,7 @@ _amount_re = re.compile(
 
 @dataclass
 class Intent:
-    kind: str                  # "did", "ask" or "settle"
+    kind: str                  # "did", "doing", "ask" or "settle"
     task: str = ""
     cents: int | None = None   # amount mentioned, if any
     note: str = ""             # what it was for, if known
@@ -153,6 +165,16 @@ def rules(text: str, known: list[str] | None = None) -> Intent | None:
         task = _task_in(m.group(0), known)
         if task:
             return Intent("ask", task)
+    active = _active_re.search(text)
+    if active:
+        if _future_re.search(active.group(0)):
+            return None
+        verb = active.group(1).lower()
+        task = (canonical_task(verb) if verb in {"driving", "hosting", "cooking", "vacuuming", "mopping", "sweeping"}
+                else _task_in(active.group(0), known))
+        if task:
+            # This records taking the turn; a present-tense amount is not a paid expense.
+            return Intent("doing", task)
     m = _did_re.search(text)
     if m:
         verb = m.group(1).lower()
@@ -170,7 +192,7 @@ def rules(text: str, known: list[str] | None = None) -> Intent | None:
 def looks_relevant(text: str, known: list[str] | None = None) -> bool:
     text = text.replace("’", "'")
     return bool(_ask_re.search(text) or _settle_re.search(text) or _amount_re.search(text)
-                or _did_re.search(text))
+                or _did_re.search(text) or _active_re.search(text))
 
 
 _PROMPT = """You read one message from a friend group's chat. Decide which of these it is:
