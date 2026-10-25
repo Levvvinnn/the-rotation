@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import os
 import logging
-import random
 import tempfile
 import time
 from pathlib import Path
@@ -99,7 +98,7 @@ async def load_channel_people(channel, asker) -> dict[int, str]:
         people = recent_people(channel.id)
     if not asker.bot:
         people[asker.id] = asker.display_name
-    # Keep the caller first; other names have a stable order for splits and demos.
+    # Keep the caller first; other names have a stable order for splits.
     return {uid: people[uid] for uid in sorted(people, key=lambda uid: (uid != asker.id, people[uid].casefold(), uid))}
 
 
@@ -601,35 +600,6 @@ async def undo(interaction: discord.Interaction):
     else:
         store.remove(ev.id)
         await interaction.response.send_message(f"↩️ Removed: {ev.user_name} did **{ev.task}**")
-
-
-@tree.command(name="demo-seed", description="Load made-up history for a demo (replaces this server's history)")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.checks.has_permissions(manage_guild=True)
-async def demo_seed(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    people = await load_channel_people(interaction.channel, interaction.user)
-    if len(people) < 3:
-        raise ValueError("The demo needs at least three people in this chat (bots don't count).")
-    first, second, third = list(people.items())[:3]
-    gid = interaction.guild_id
-    for task in store.tasks(gid):
-        store.clear_task(gid, task)
-    store.clear_money(gid)
-    now, day = time.time(), 86400
-    # drive: first ask is too close to call (wheel), second ask after logging is a clear answer
-    for (uid, name), days_ago in [(first, [2, 6, 13]), (second, [9, 20]), (third, [12])]:
-        for d in days_ago:
-            store.add(gid, "drive", uid, name, source="demo", ts=now - d * day - random.randint(0, 3600))
-    for (uid, name), d in [(first, 3), (second, 5), (third, 7)]:
-        store.add(gid, "pay", uid, name, source="demo", ts=now - d * day)
-    trio = [first, second, third]
-    store.add_expense(gid, first[0], first[1], 6000, "dinner", money.split(6000, trio), ts=now - 3 * day)
-    store.add_expense(gid, second[0], second[1], 2400, "uber", money.split(2400, trio), ts=now - 2 * day)
-    names = ", ".join(discord.utils.escape_markdown(name) for _, name in trio)
-    await interaction.followup.send(f"🎬 Demo history loaded for {names}: drive turns, a $60 dinner and a $24 uber.", ephemeral=True)
-
 
 
 # ---------- startup ----------

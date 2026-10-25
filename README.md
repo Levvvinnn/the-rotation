@@ -68,21 +68,10 @@ Say **“paid you back @Ana”**, **“venmo'd you $20 @Ana”**, or reply to An
 | `/owe` | Show the minimum-payment plan and settlement buttons |
 | `/settle who [amount]` | Record your full suggested repayment or a partial amount |
 | `/undo` | Remove the most recently recorded turn/payment; logger or server manager only |
-| `/demo-seed` | Load demo data using you and two other real people in this chat; **Manage Server required** |
 
 There are no numbered friend fields. `/spin task:cooking` uses the group automatically. With `choose_people:true`, the private picker starts with everyone selected, lets you toggle actual names, and has page buttons for groups larger than 25. Only the command caller can use that picker. Expense splits always include the payer.
 
 Commands work in servers. Participant pickers expire after five minutes. Other buttons expire after one hour and after a bot restart; history stays saved, and `/spin` or `/owe` creates fresh buttons. Repeated clicks and redelivered chat messages do not duplicate a log. Rules recognize the common phrases, skip obvious negations/quotes/questions, and support known custom task names. For unusual task wording, `/log` is always available.
-
-## Demo
-
-Use a test server: `/demo-seed` **replaces that server's history**. Run `/demo-seed` in a channel with three people. It automatically uses you first and two other people ordered by display name; the confirmation lists those names. In the example below we call them Ana, Ben, and Cal.
-
-1. Ask “whose turn to drive?” → the wheel spins; Cal has the largest slice.
-2. Log the chosen person's turn with ✅. If Cal was picked, the next drive question clearly selects Ben.
-3. Ask “whose turn to pay?” → Cal is clearly up, including “owes $28.00”.
-4. `/owe` → Cal → Ana $28.00 and Ben → Ana $4.00. Each person can confirm their payment.
-5. Say “I paid $36 for pizza @Ana @Cal” and check `/owe` again.
 
 ## Optional configuration and hosting
 

@@ -50,10 +50,9 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_required_commands_are_registered_and_server_only(self):
         self.assertEqual({c.name for c in bot.tree.get_commands()},
-                         {'spin','tally','log','expense','owe','settle','undo','demo-seed'})
+                         {'spin','tally','log','expense','owe','settle','undo'})
         self.assertTrue(all(c.guild_only for c in bot.tree.get_commands()))
-        self.assertTrue(bot.demo_seed.default_permissions.manage_guild)
-        self.assertTrue(bot.demo_seed.checks)
+        self.assertIsNone(bot.tree.get_command("demo-seed"))
 
     async def test_chat_expense_and_author_reaction_undo(self):
         msg = self.message(self.ana, 'I paid $48 for dinner <@2> <@3>', [self.ben, self.cal])
@@ -359,14 +358,6 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         thread.members=[]
         thread.fetch_members=AsyncMock(return_value=[NS(id=1),NS(id=3)])
         self.assertEqual(await bot.load_channel_people(thread,self.ana),{1:'Ana',3:'Cal'})
-
-    async def test_demo_seed_automatically_uses_three_real_channel_names(self):
-        self.channel.members=[self.ana,self.ben,self.cal,NS(id=99,display_name='Rotater',bot=True)]
-        interaction=self.interaction(self.ana)
-        await bot.demo_seed.callback(interaction)
-        self.assertEqual({e.user_name for e in bot.store.events(10,'drive')},{'Ana','Ben','Cal'})
-        self.assertIn('Ana, Ben, Cal',interaction.followup.send.call_args.args[0])
-        self.assertEqual(bot.demo_seed.parameters,[])
 
     async def test_default_chat_group_uses_current_channel_members(self):
         self.channel.members=[self.ana,self.ben,self.cal,NS(id=99,display_name='Rotater',bot=True)]
