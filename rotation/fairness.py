@@ -37,13 +37,13 @@ def standings(people: dict[int, str], events, now: float | None = None,
     now = time.time() if now is None else now
     out = []
     for uid, name in people.items():
-        mine = [e for e in events if e.user_id == uid]
+        mine = [e for e in events if e.user_id == uid and e.ts <= now]
         recent = [e for e in mine if now - e.ts <= WINDOW_DAYS * DAY]
         last = max((e.ts for e in mine), default=None)
         days = None if last is None else max(0.0, (now - last) / DAY)
-        overdue = NEVER_DAYS if days is None else min(days, NEVER_DAYS)
+        overdue = NEVER_DAYS if days is None else days
         weight = (overdue + 1.0) / (len(recent) + 1.0)
-        owed = owes_cents.get(uid, 0)
+        owed = max(0, owes_cents.get(uid, 0))
         weight *= 1.0 + owed / OWE_STEP_CENTS
         out.append(Standing(uid, name, len(recent), days, weight, owed))
     out.sort(key=lambda s: s.weight, reverse=True)
@@ -87,5 +87,11 @@ def _describe_turns(s: Standing) -> str:
 
 
 def chances(ranked: list[Standing]) -> list[int]:
-    total = sum(s.weight for s in ranked) or 1.0
-    return [round(100 * s.weight / total) for s in ranked]
+    if not ranked:
+        return []
+    total = sum(s.weight for s in ranked)
+    raw = [100 * s.weight / total for s in ranked]
+    whole = [int(pct) for pct in raw]
+    for i in sorted(range(len(raw)), key=lambda i: raw[i] - whole[i], reverse=True)[:100 - sum(whole)]:
+        whole[i] += 1
+    return whole

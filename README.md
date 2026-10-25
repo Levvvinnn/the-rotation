@@ -1,86 +1,114 @@
 # The Rotation 🔁
 
-A Discord bot that keeps a friend group's turns and money fair.
+A Discord bot for a friend group's turns and shared expenses. It runs on Python 3.10+, stores history in SQLite, and works without an AI API key.
 
-Who's driving, getting the Uber, hosting, paying? Who still owes who for dinner? The Rotation lives in your group
-chat, picks up "I drove last night" and "I paid $48 for dinner" on its own, tells you who's up next and why, and
-when it's too close to call, spins a wheel where each friend's slice is as big as how overdue they are.
+## Start it
 
-Track 3 (Group Chat Assistant) entry for the Cubbie Hackathon.
+1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications). In **Bot**, create/copy its token and enable **Message Content Intent** and **Server Members Intent**. The bot needs that intent to read ordinary chat messages ([Discord documentation](https://docs.discord.com/developers/events/gateway#message-content-intent)).
+2. In **OAuth2 → URL Generator**, select `bot` and `applications.commands`. Give it **View Channels, Send Messages, Embed Links, Attach Files, Add Reactions, Read Message History**, and **Send Messages in Threads** if you use threads. Open the generated link to invite it to your server.
+3. In this folder:
 
-## What it does
-
-**Turns**
-- **Logs from the chat.** "I drove last night", "I got the uber home", "I hosted friday" → the bot reacts 📝.
-  Wrong? The person who said it reacts ❌ to undo.
-- **"Whose turn to drive?"** Mention friends to choose who's in, or leave it and it uses everyone who's done it
-  before. If someone's clearly overdue: "🔁 Up in the rotation: Ben (drive)" with everyone's odds and why.
-- **Too close? It spins.** A wheel GIF where slice size = how overdue each person is. Then: ✅ Done, log it ·
-  🙅 Can't, spin without me (only the picked person can pass).
-
-**Money**
-- **Logs from the chat.** "I paid $48 for dinner @Ben @Cal" → "💸 Ana paid $48.00 for dinner · split 3 ways: Ben
-  $16.00 · Cal $16.00". No mentions? It splits with whoever's been talking in the channel recently.
-- **`/owe`** nets everything into the fewest payments ("Cal → Ana $28.00"), with a 🤝 button to mark each paid.
-- **Settle up from the chat.** "paid you back @Ana" or "venmo'd you $20" (or reply to their message) → 🤝.
-- **Turns and money talk to each other.** For money turns (pay, food, uber, groceries, snacks), whoever owes the
-  group more gets a bigger slice. Owing money makes you more likely to be up next to pay.
-
-**Commands:** `/spin`, `/tally`, `/log`, `/expense`, `/owe`, `/settle`, `/undo`, `/demo-seed`.
-
-How "overdue" works: weight = (days since you last did it + 1) ÷ (times in the last 60 days + 1); never done it
-counts as 30 days. On money turns, every $25 you owe adds 1× to your weight. If the top person's weight is at least
-double the next one's, it's a clear answer; otherwise the wheel spins with those weights.
-
-## Set up (about 10 minutes)
-
-1. **Make the bot.** https://discord.com/developers/applications → New Application → "Bot" tab → Reset Token and
-   copy it. On the same page, turn on **Message Content Intent**.
-2. **Invite it.** "OAuth2" → "URL Generator" → scopes `bot` and `applications.commands` → permissions: Send
-   Messages, Embed Links, Attach Files, Add Reactions, Read Message History → open the URL and pick your server.
-3. **Run it** (Python 3.10+):
    ```bash
    python3 -m venv .venv
-   source .venv/bin/activate          # Windows: .venv\Scripts\activate
+   source .venv/bin/activate
    pip install -r requirements.txt
-   cp .env.example .env               # then paste your token into .env
+   cp .env.example .env
+   ```
+
+   Put the bot token in `.env` as `DISCORD_TOKEN=...`, then run:
+
+   ```bash
    python bot.py
    ```
-   When it prints "The Rotation is online", the slash commands are ready in your server.
-4. **Optional:** add an Anthropic API key to `.env` as `ANTHROPIC_API_KEY` so it understands any phrasing
-   ("bro I carried the whole Costco run, 63 bucks"). Without it, built-in phrase matching handles the common ones.
 
-Keep `.env` private. It's in `.gitignore` so it never gets pushed.
+   On Windows, activate with `.venv\Scripts\activate` instead.
 
-## Demo in 90 seconds
+The bot registers its slash commands in each server and prints `The Rotation is online`. Keep the process running for it to respond. The token stays in your local `.env`, which is ignored by Git.
 
-Three people in a test server: Ana, Ben, Cal.
+## Turns
 
-1. `/demo-seed friend1:@Ana friend2:@Ben friend3:@Cal` (made-up history: Ana drives a lot, Cal barely; Ana
-   covered a $60 dinner, Ben a $24 uber).
-2. Ana: **"whose turn to drive to the game?"** → too close to call → the wheel spins (Cal has the biggest slice).
-3. The picked person taps **✅ Done, log it**. Ana asks again → a clear answer this time, with everyone's odds.
-4. Ben: **"whose turn to pay?"** → Cal, clearly: "owes $28.00". Money and turns working together.
-5. `/owe` → "Cal → Ana $28.00 · Ben → Ana $4.00". Cal taps 🤝 → updated card.
-6. Ben: **"I paid $36 for pizza @Ana @Cal"** → 💸 split card. `/owe` again.
+- Say **“I drove last night”**, **“I got the uber home”**, **“I cooked dinner”**, **“I did the dishes”**, or **“I did laundry”**. The bot records the matching task, reacts 📝, and replies **“📝 Logged: Ana did cooking”** with the next-turn status. The author can react ❌ on their original message to remove that log and its associated expense.
+- Cooking, dishes, laundry, trash, vacuuming, mopping, bathroom/kitchen cleaning, plants, dog care, and other built-in tasks are recognized without an AI key. A custom task taught with `/log` is recognized in later completion statements such as “I did the litter box”. `cook`, `cooked`, and `cooking` all use the same cooking history.
+- Run **`/tally` without a task** for an overview showing the next-turn status and last completion for each task. **`/tally task:cooking`** adds that task's participant odds and reasons. A close rotation explicitly says **spin needed** and names the most overdue person; a clear rotation names who is up next.
+- Ask **“Whose turn to drive?”**. Mention friends to include yourself and those friends. Without mentions, the bot uses the real people who can access this channel, including offline members; bots are excluded. Threads use their joined members. Everyone is displayed by their Discord display name. Those participants are remembered for task history, including friends who have not completed the task yet.
+- A clear leader gets **🔁 Up in the rotation: Ben (drive)**, with everyone's odds and a reason. Otherwise, the bot sends a weighted wheel GIF and the result.
+- **✅ Done, log it** records the chosen person's turn. Anyone included in that rotation can confirm. **🙅 Can't, spin without me** is available only to the picked person and excludes them from that spin and its subsequent passes. A clear result also has **Spin anyway**.
+- “Last night”, “yesterday”, weekday names, “last week”, and “N days ago” backdate a log. Other logs use the message time. `ROTATION_TIMEZONE` controls the calendar; the example uses `America/Phoenix`.
 
-## Tests
+Weights follow exactly:
 
-```bash
-python -m unittest discover tests
+```text
+base weight = (days since last time + 1) / (times in the last 60 days + 1)
+never done it: use 30 days
+money task weight = base weight × (1 + net amount owed / $25)
 ```
 
-They cover the fairness math (including the demo flow), splitting and settling money, money-aware turns, that the
-wheel always stops on the picked person, the GIF size, and the phrase matching.
+Elapsed days are fractional and have no maximum. Money tasks are `pay`, `food`, `uber`, `groceries`, and `snacks`. A leader whose weight is at least twice the next person's gets a clear answer. Otherwise, the probability and wheel slice are proportional to weight. Displayed percentages total 100%.
+
+## Money
+
+**“I paid $48 for dinner @Ben @Cal”** logs a turn and an expense:
+
+> 💸 Ana paid $48.00 for dinner · split 3 ways: Ben $16.00 · Cal $16.00
+
+The payer is included in the split. Without mentions, participants are the people the bot observed talking in that channel during the last 12 hours. Recent speakers survive restarts. If no other participants are known, the bot asks you to use `/expense` with friends instead of inventing a split. Amounts use integer cents; leftover pennies go to the first participants, starting with the payer.
+
+`/owe` nets all expenses and settlements **within this server** into the fewest direct payments from net debtors to net creditors. Each payment has a 🤝 button; only its sender or recipient can confirm it. Larger plans have page buttons. Confirmation records a settlement; it does not send real money. Old cards reject confirmation after balances change. Run `/owe` again for a fresh plan.
+
+Say **“paid you back @Ana”**, **“venmo'd you $20 @Ana”**, or reply to Ana's message with the repayment. Without an explicit recipient, the bot can infer the recipient when your current plan has only one. Otherwise it asks who you paid. With no amount, it uses the suggested payment to that person. An explicit amount supports partial repayments to any net creditor, up to the smaller of your outstanding debt and their credit. Successful logs get 🤝 and can be undone by their author with ❌.
+
+## Commands
+
+| Command | Use |
+| --- | --- |
+| `/spin task [choose_people]` | Spin using everyone in this chat; `choose_people:true` opens a picker with their names |
+| `/tally [task]` | Show who is next for every task; optionally inspect one task with odds and history |
+| `/log task [who]` | Record a turn; defaults to yourself |
+| `/expense amount note [choose_people]` | Split with the humans in this chat; `choose_people:true` lets you select names |
+| `/owe` | Show the minimum-payment plan and settlement buttons |
+| `/settle who [amount]` | Record your full suggested repayment or a partial amount |
+| `/undo` | Remove the most recently recorded turn/payment; logger or server manager only |
+| `/demo-seed` | Load demo data using you and two other real people in this chat; **Manage Server required** |
+
+There are no numbered friend fields. `/spin task:cooking` uses the group automatically. With `choose_people:true`, the private picker starts with everyone selected, lets you toggle actual names, and has page buttons for groups larger than 25. Only the command caller can use that picker. Expense splits always include the payer.
+
+Commands work in servers. Participant pickers expire after five minutes. Other buttons expire after one hour and after a bot restart; history stays saved, and `/spin` or `/owe` creates fresh buttons. Repeated clicks and redelivered chat messages do not duplicate a log. Rules recognize the common phrases, skip obvious negations/quotes/questions, and support known custom task names. For unusual task wording, `/log` is always available.
+
+## Demo
+
+Use a test server: `/demo-seed` **replaces that server's history**. Run `/demo-seed` in a channel with three people. It automatically uses you first and two other people ordered by display name; the confirmation lists those names. In the example below we call them Ana, Ben, and Cal.
+
+1. Ask “whose turn to drive?” → the wheel spins; Cal has the largest slice.
+2. Log the chosen person's turn with ✅. If Cal was picked, the next drive question clearly selects Ben.
+3. Ask “whose turn to pay?” → Cal is clearly up, including “owes $28.00”.
+4. `/owe` → Cal → Ana $28.00 and Ben → Ana $4.00. Each person can confirm their payment.
+5. Say “I paid $36 for pizza @Ana @Cal” and check `/owe` again.
+
+## Optional configuration and hosting
+
+- `ROTATION_DB`: SQLite path, default `rotation.db` beside `bot.py`. On a hosted machine, put it on persistent disk. Back up this file to retain history. Run one bot process against it.
+- `ROTATION_TIMEZONE`: IANA timezone for past-day phrases, default UTC.
+- `ANTHROPIC_API_KEY` **and** `ROTATION_MODEL`: optional API key and an available Anthropic model ID. Both must be set to enable the fallback. Relevant messages that built-in rules cannot parse are sent to Anthropic; leave both blank to keep parsing local. API errors fall back to the local rules.
+
+Exact minimum-payment search can take longer for large groups because the general problem is exponential. This bot is designed for friend groups.
+
+## Verify locally
+
+```bash
+.venv/bin/python -m unittest discover tests -v
+```
+
+Tests cover the overdue formula, weighted selection, wheel alignment and GIF size, payment minimization, rounding, partial settlements, phrase recognition, past dates, SQLite migration and persistence, server/channel isolation, command registration, reaction undo, button permissions, duplicate events, and stale cards. Discord callbacks are tested using mocks; a real server smoke test requires your bot token.
 
 ## Files
 
 ```text
-bot.py                    Discord bot: reads chat, buttons, slash commands
-rotation/fairness.py      who's overdue, odds, weighted pick
-rotation/money.py         splits, balances, fewest payments
-rotation/wheel.py         draws the spinning wheel GIF
-rotation/understand.py    "I drove" / "I paid $48" / "whose turn?" / "paid you back" from chat
-rotation/store.py         SQLite history per server
-tests/                    unit tests
+bot.py                    Discord events, buttons, slash commands, startup
+rotation/fairness.py      overdue math, odds, weighted selection
+rotation/money.py         cent-safe amounts, splitting, minimum payments
+rotation/wheel.py         weighted wheel GIF renderer
+rotation/understand.py    phrase parsing and optional AI fallback
+rotation/store.py         SQLite history, task participants, recent speakers, ledger versions
+rotation/participants.py  name-based participant picker
+tests/                   unit and Discord callback tests
 ```

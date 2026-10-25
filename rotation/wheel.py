@@ -70,20 +70,24 @@ def _overlay(size: int) -> Image.Image:
     d = ImageDraw.Draw(over)
     c = size / 2
     d.ellipse((c - size * 0.07, c - size * 0.07, c + size * 0.07, c + size * 0.07),
-              fill="white", outline="#222222", width=4)
-    d.polygon([(c - size * 0.05, 0), (c + size * 0.05, 0), (c, size * 0.11)], fill="#222222")
+              fill="#1E1F22", outline="#F2F3F5", width=4)
+    d.polygon([(c - size * 0.05, 0), (c + size * 0.05, 0), (c, size * 0.11)], fill="#F2F3F5", outline="#111214", width=2)
     return over
 
 
 def render(names: list[str], weights: list[float], winner: int, out_path: str | Path,
            size: int = 420, frames: int = 48, seed: int | None = None) -> Path:
     """Write a spin GIF that ends on `winner`. Returns the path."""
+    if len(names) != len(weights) or not names or not 0 <= winner < len(names):
+        raise ValueError("Choose a winner from matching names and weights.")
+    if any(not math.isfinite(w) or w <= 0 for w in weights) or frames < 2 or size < 100:
+        raise ValueError("Use positive finite weights, at least two frames, and a size of 100 or more.")
     rng = random.Random(seed)
     spans = slices(weights)
     total_rot = final_rotation(spans, winner, rng)
     wheel = _wheel_image(names, spans, size)
     over = _overlay(size)
-    bg = (255, 255, 255, 255)
+    bg = (26, 26, 30, 255)  # #1A1A1E, sampled from the Discord reference
 
     pics, durations = [], []
     for i in range(frames):
