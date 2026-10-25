@@ -194,6 +194,9 @@ class TurnView(discord.ui.View):
             self.remove_item(self.spin_anyway)
 
     async def claim(self, interaction: discord.Interaction) -> bool:
+        if store.is_task_removed(self.guild_id, self.task):
+            await interaction.response.send_message("This task was removed. Add it again with /add-task to start a new rotation.", ephemeral=True)
+            return False
         if interaction.user.id not in self.people:
             await interaction.response.send_message("Only people in this rotation can use these buttons.", ephemeral=True)
             return False
@@ -241,6 +244,9 @@ class TurnView(discord.ui.View):
 
 
 async def run_turn(channel, guild_id: int, task: str, people: dict[int, str], force_spin: bool = False) -> None:
+    if store.is_task_removed(guild_id, task):
+        await channel.send(f"This task was removed. Use `/add-task name:{task}` to enable it again.")
+        return
     if not people:
         await channel.send(f"Nobody's in yet. Mention who's in: `whose turn to {task} @friend @friend`")
         return
@@ -336,7 +342,7 @@ def record_expense(guild_id: int, payer, people: dict[int, str], cents: int, not
                    message_id: int | None = None, log_turn: bool = False) -> str:
     order = [(payer.id, payer.display_name)] + [(u, n) for u, n in people.items() if u != payer.id]
     shares = money.split(cents, order)
-    if log_turn:
+    if log_turn and not store.is_task_removed(guild_id, "pay"):
         store.add(guild_id, "pay", payer.id, payer.display_name, source="command", message_id=message_id)
     store.add_expense(guild_id, payer.id, payer.display_name, cents, note or "", shares, message_id=message_id)
     others = " · ".join(f"{n} {money.fmt(c)}" for u, n, c in shares if u != payer.id)
@@ -358,6 +364,24 @@ async def on_message(message: discord.Message):
     gid, author = message.guild.id, message.author
     if intent.kind in ("did", "doing", "ask"):
         intent.task = normalize_task(intent.task)
+        if store.is_task_removed(gid, intent.task):
+            # Money tracking remains available even when its rotation is removed.
+            if intent.kind == "did" and intent.cents:
+                people = {author.id: author.display_name, **mentioned(message)}
+                if len(people) < 2:
+                    people.update(recent_people(message.channel.id))
+                if len(people) < 2:
+                    await message.reply("Who was the expense split with? Use /expense to choose people.", mention_author=False)
+                    return
+                line = record_expense(gid, author, people, intent.cents, intent.note, message_id=message.id)
+                try:
+                    await message.add_reaction("📝")
+                except discord.HTTPException:
+                    logger.warning("Expense logged, but could not add a reaction in channel %s", message.channel.id)
+                await message.reply(line + "\n-# React ❌ on your original message to undo.", mention_author=False)
+            elif intent.kind == "ask":
+                await message.reply(f"This task was removed. Use `/add-task name:{intent.task}` to enable it again.", mention_author=False)
+            return
 
     if intent.kind == "settle":
         target = next(iter(mentioned(message).items()), None)
@@ -478,7 +502,8 @@ async def command_error(interaction: discord.Interaction, error: app_commands.Ap
 async def task_autocomplete(interaction: discord.Interaction, current: str):
     registered = tracked_tasks(interaction.guild_id)
     names = registered + sorted(set(TASKS) - set(registered))
-    return [app_commands.Choice(name=n, value=n) for n in names if current.lower() in n][:25]
+    removed = set(store.removed_tasks(interaction.guild_id))
+    return [app_commands.Choice(name=n, value=n) for n in names if n not in removed and current.lower() in n][:25]
 
 
 @tree.command(name="add-task", description="Add a task type for this server's rotation")
@@ -501,12 +526,92 @@ async def add_task(interaction: discord.Interaction, name: str):
                                     f"Use `/spin task:{task}`, or say **I did the {label}** to log a turn.")
 
 
+def require_active_task(guild_id: int, task: str) -> None:
+    if store.is_task_removed(guild_id, task):
+        raise ValueError(f"This task was removed. Use /add-task name:{task} to enable it again.")
+
+
+def can_remove_task(interaction: discord.Interaction, task: str) -> bool:
+    return interaction.permissions.manage_guild or store.task_creator(interaction.guild_id, task) == interaction.user.id
+
+
+class RemoveTaskView(discord.ui.View):
+    def __init__(self, owner_id: int, guild_id: int, task: str):
+        super().__init__(timeout=300)
+        self.owner_id, self.guild_id, self.task = owner_id, guild_id, task
+        self.handled = False
+        self.event_ids = tuple(event.id for event in task_events(guild_id, task))
+
+    def description(self) -> str:
+        label = discord.utils.escape_markdown(self.task)
+        return (f"Remove **{label}** and its **{len(self.event_ids)} turn logs** from this server? "
+                "This deletes its rotation history and stops automatic task logging until it is added again. "
+                "Existing expenses and repayments stay recorded.")
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Only the person who requested removal can confirm or cancel.", ephemeral=True)
+            return False
+        if self.handled:
+            await interaction.response.send_message("This request was already handled.", ephemeral=True)
+            return False
+        return True
+
+    async def finish(self, interaction: discord.Interaction, text: str):
+        self.handled = True
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(content=text, view=self)
+        self.stop()
+
+    @discord.ui.button(label="Remove task", emoji="🗑️", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        if not await self.interaction_check(interaction):
+            return
+        if store.is_task_removed(self.guild_id, self.task):
+            await self.finish(interaction, "This task has already been removed.")
+            return
+        if not can_remove_task(interaction, self.task):
+            await interaction.response.send_message("Only the task creator or a server manager can remove it.", ephemeral=True)
+            return
+        current = tuple(event.id for event in task_events(self.guild_id, self.task))
+        if current != self.event_ids:
+            self.event_ids = current
+            await interaction.response.edit_message(content="The task history changed. Review it before confirming again.\n" + self.description(), view=self)
+            return
+        names = [name for name in store.tasks(self.guild_id) if canonical_task(name) == self.task]
+        store.remove_task_type(self.guild_id, self.task, interaction.user.id, names)
+        await self.finish(interaction, f"🗑️ Removed **{discord.utils.escape_markdown(self.task)}** and its rotation history.")
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        if await self.interaction_check(interaction):
+            await self.finish(interaction, "Cancelled. The task is still tracked.")
+
+
+@tree.command(name="remove-task", description="Remove a task type and its rotation history")
+@app_commands.guild_only()
+@app_commands.describe(name="Task type to remove")
+@app_commands.autocomplete(name=task_autocomplete)
+async def remove_task(interaction: discord.Interaction, name: str):
+    task = normalize_task(name)
+    if store.is_task_removed(interaction.guild_id, task) or task not in set(tracked_tasks(interaction.guild_id)) | set(TASKS):
+        await interaction.response.send_message("That task is not tracked.", ephemeral=True)
+        return
+    if not can_remove_task(interaction, task):
+        await interaction.response.send_message("Only the task creator or a server manager can remove it.", ephemeral=True)
+        return
+    view = RemoveTaskView(interaction.user.id, interaction.guild_id, task)
+    await interaction.response.send_message(view.description(), view=view, ephemeral=True)
+
+
 @tree.command(name="spin", description="Spin for a task using the people in this chat")
 @app_commands.guild_only()
 @app_commands.describe(task="drive, uber, cooking, dishes…", choose_people="Optional: pick from people's names instead of using everyone")
 @app_commands.autocomplete(task=task_autocomplete)
 async def spin(interaction: discord.Interaction, task: str, choose_people: bool = False):
     task = normalize_task(task)
+    require_active_task(interaction.guild_id, task)
     await interaction.response.defer(ephemeral=choose_people)
     people = await load_channel_people(interaction.channel, interaction.user)
     if choose_people:
@@ -531,6 +636,7 @@ async def tally(interaction: discord.Interaction, task: str | None = None):
             await interaction.followup.send(embed=em)
         return
     task = normalize_task(task)
+    require_active_task(interaction.guild_id, task)
     events = task_events(interaction.guild_id, task)
     ranked = task_standings(interaction.guild_id, task)
     if not ranked:
@@ -549,6 +655,7 @@ async def tally(interaction: discord.Interaction, task: str | None = None):
 async def log(interaction: discord.Interaction, task: str, who: discord.Member | None = None):
     who = who or interaction.user
     task = normalize_task(task)
+    require_active_task(interaction.guild_id, task)
     if who.bot:
         raise ValueError("Choose a person, rather than a bot.")
     people = default_people(interaction.channel_id, interaction.guild_id, task, {who.id: who.display_name})

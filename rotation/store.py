@@ -69,6 +69,9 @@ class Store:
             CREATE INDEX IF NOT EXISTS events_message ON events(message_id);
             CREATE INDEX IF NOT EXISTS expenses_guild ON expenses(guild_id);
             CREATE INDEX IF NOT EXISTS shares_expense ON shares(expense_id);
+            CREATE TABLE IF NOT EXISTS removed_task_types (
+                guild_id INTEGER NOT NULL, task TEXT NOT NULL, removed_by INTEGER NOT NULL, removed_at REAL NOT NULL,
+                PRIMARY KEY(guild_id, task));
             CREATE TABLE IF NOT EXISTS task_types (
                 guild_id INTEGER NOT NULL, task TEXT NOT NULL, created_by INTEGER NOT NULL, created_at REAL NOT NULL,
                 PRIMARY KEY(guild_id, task));
@@ -112,9 +115,31 @@ class Store:
     def register_task(self, guild_id: int, task: str, created_by: int) -> bool:
         task = " ".join(task.lower().split())
         with self.db:
+            self.db.execute("DELETE FROM removed_task_types WHERE guild_id = ? AND task = ?", (guild_id, task))
             cur = self.db.execute("INSERT OR IGNORE INTO task_types VALUES (?,?,?,?)",
                                   (guild_id, task, created_by, time.time()))
         return bool(cur.rowcount)
+
+    def task_creator(self, guild_id: int, task: str) -> int | None:
+        row = self.db.execute("SELECT created_by FROM task_types WHERE guild_id = ? AND task = ?",
+                              (guild_id, task)).fetchone()
+        return row[0] if row else None
+
+    def removed_tasks(self, guild_id: int) -> list[str]:
+        return [row[0] for row in self.db.execute("SELECT task FROM removed_task_types WHERE guild_id = ?", (guild_id,))]
+
+    def is_task_removed(self, guild_id: int, task: str) -> bool:
+        return self.db.execute("SELECT 1 FROM removed_task_types WHERE guild_id = ? AND task = ?",
+                               (guild_id, task)).fetchone() is not None
+
+    def remove_task_type(self, guild_id: int, task: str, removed_by: int, names: list[str]) -> None:
+        """Remove a rotation atomically; its money records remain in the ledger."""
+        with self.db:
+            for name in set(names) | {task}:
+                for table in ("events", "task_people", "task_types"):
+                    self.db.execute(f"DELETE FROM {table} WHERE guild_id = ? AND task = ?", (guild_id, name))
+            self.db.execute("INSERT OR REPLACE INTO removed_task_types VALUES (?,?,?,?)",
+                            (guild_id, task, removed_by, time.time()))
 
     def task_people(self, guild_id: int, task: str) -> dict[int, str]:
         return dict(self.db.execute("SELECT user_id, user_name FROM task_people WHERE guild_id = ? AND task = ?",

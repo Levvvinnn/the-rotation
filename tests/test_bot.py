@@ -50,7 +50,7 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_required_commands_are_registered_and_server_only(self):
         self.assertEqual({c.name for c in bot.tree.get_commands()},
-                         {'add-task','spin','tally','log','expense','owe','settle','undo'})
+                         {'add-task','remove-task','spin','tally','log','expense','owe','settle','undo'})
         self.assertTrue(all(c.guild_only for c in bot.tree.get_commands()))
         self.assertIsNone(bot.tree.get_command("demo-seed"))
 
@@ -446,6 +446,108 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         other.guild_id=20
         choices=await bot.task_autocomplete(other,'litter')
         self.assertEqual(choices,[])
+
+    async def test_remove_task_requires_confirmation_and_preserves_money(self):
+        await bot.add_task.callback(self.interaction(self.ana),'litter box')
+        bot.store.add(10,'litter box',1,'Ana')
+        self.seed_money()
+        before=money.balances(bot.store.expenses(10))
+        interaction=self.interaction(self.ana)
+        await bot.remove_task.callback(interaction,'litter box')
+        view=interaction.response.send_message.call_args.kwargs['view']
+        self.assertEqual(len(bot.store.events(10,'litter box')),1)
+        await view.confirm.callback(interaction)
+        self.assertNotIn('litter box',bot.store.tasks(10))
+        self.assertEqual(bot.store.events(10,'litter box'),[])
+        self.assertEqual(bot.store.task_people(10,'litter box'),{})
+        self.assertEqual(money.balances(bot.store.expenses(10)),before)
+        self.assertTrue(bot.store.is_task_removed(10,'litter box'))
+
+    async def test_remove_task_cancel_keeps_history(self):
+        await bot.add_task.callback(self.interaction(self.ana),'litter box')
+        bot.store.add(10,'litter box',1,'Ana')
+        interaction=self.interaction(self.ana)
+        await bot.remove_task.callback(interaction,'litter box')
+        view=interaction.response.send_message.call_args.kwargs['view']
+        await view.cancel.callback(interaction)
+        await view.confirm.callback(interaction)
+        self.assertEqual(len(bot.store.events(10,'litter box')),1)
+        self.assertFalse(bot.store.is_task_removed(10,'litter box'))
+
+    async def test_remove_task_checks_owner_and_manager_permissions(self):
+        await bot.add_task.callback(self.interaction(self.ana),'litter box')
+        outsider=self.interaction(self.ben)
+        await bot.remove_task.callback(outsider,'litter box')
+        self.assertIn('task creator',outsider.response.send_message.call_args.args[0])
+        manager=self.interaction(self.ben)
+        manager.permissions.manage_guild=True
+        await bot.remove_task.callback(manager,'litter box')
+        view=manager.response.send_message.call_args.kwargs['view']
+        await view.confirm.callback(self.interaction(self.ana))
+        self.assertFalse(bot.store.is_task_removed(10,'litter box'))
+        await view.confirm.callback(manager)
+        self.assertTrue(bot.store.is_task_removed(10,'litter box'))
+
+    async def test_remove_task_rechecks_new_history_before_deleting(self):
+        await bot.add_task.callback(self.interaction(self.ana),'litter box')
+        interaction=self.interaction(self.ana)
+        await bot.remove_task.callback(interaction,'litter box')
+        view=interaction.response.send_message.call_args.kwargs['view']
+        bot.store.add(10,'litter box',2,'Ben')
+        await view.confirm.callback(interaction)
+        self.assertFalse(bot.store.is_task_removed(10,'litter box'))
+        self.assertEqual(len(bot.store.events(10,'litter box')),1)
+        await view.confirm.callback(interaction)
+        self.assertTrue(bot.store.is_task_removed(10,'litter box'))
+
+    async def test_removed_builtin_stays_out_of_autocomplete_and_chat_until_readded(self):
+        interaction=self.interaction(self.ana)
+        interaction.permissions.manage_guild=True
+        await bot.remove_task.callback(interaction,'cook')
+        view=interaction.response.send_message.call_args.kwargs['view']
+        await view.confirm.callback(interaction)
+        self.assertNotIn('cooking',[c.value for c in await bot.task_autocomplete(interaction,'cook')])
+        msg=self.message(self.ana,'im cooking today')
+        await bot.on_message(msg)
+        msg.add_reaction.assert_not_awaited()
+        self.assertEqual(bot.store.events(10,'cooking'),[])
+        with self.assertRaises(ValueError):
+            await bot.log.callback(interaction,'cooking')
+        await bot.add_task.callback(interaction,'cooking')
+        self.assertFalse(bot.store.is_task_removed(10,'cooking'))
+        self.assertIn('cooking',[c.value for c in await bot.task_autocomplete(interaction,'cook')])
+        await bot.on_message(self.message(self.ana,'im cooking today',mid=777))
+        self.assertEqual(len(bot.store.events(10,'cooking')),1)
+
+    async def test_removing_pay_rotation_preserves_future_expense_logging(self):
+        bot.store.remove_task_type(10,'pay',1,['pay'])
+        msg=self.message(self.ana,'I paid $48 for dinner',[self.ben,self.cal])
+        await bot.on_message(msg)
+        self.assertEqual(bot.store.events(10,'pay'),[])
+        self.assertEqual(bot.store.expenses(10)[0].cents,4800)
+        self.assertNotIn('pay',bot.store.tasks(10))
+        self.assertIn('split 3 ways',msg.reply.call_args.args[0])
+
+    async def test_removed_task_cannot_be_recreated_by_old_buttons(self):
+        bot.store.register_task(10,'cooking',1)
+        view=bot.TurnView(10,'cooking',{1:'Ana',2:'Ben'},1,'Ana',True)
+        bot.store.remove_task_type(10,'cooking',1,['cooking'])
+        await view.done.callback(self.interaction(self.ana))
+        self.assertEqual(bot.store.events(10,'cooking'),[])
+
+    async def test_removing_alias_clears_only_its_rotation_in_this_server(self):
+        bot.store.add(10,'cook',1,'Ana')
+        bot.store.add(10,'cooking',2,'Ben')
+        bot.store.add(10,'drive',2,'Ben')
+        bot.store.add(20,'cooking',1,'Ana')
+        interaction=self.interaction(self.ana)
+        interaction.permissions.manage_guild=True
+        await bot.remove_task.callback(interaction,'cooked')
+        await interaction.response.send_message.call_args.kwargs['view'].confirm.callback(interaction)
+        self.assertEqual(bot.store.events(10,'cook'),[])
+        self.assertEqual(bot.store.events(10,'cooking'),[])
+        self.assertEqual(len(bot.store.events(10,'drive')),1)
+        self.assertEqual(len(bot.store.events(20,'cooking')),1)
 
     async def test_chat_records_explicit_past_time(self):
         msg = self.message(self.ana, 'I drove last night')

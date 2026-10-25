@@ -183,6 +183,24 @@ class RegressionTest(unittest.TestCase):
             finally:
                 store.db.close()
 
+    def test_removed_task_persists_and_can_be_explicitly_readded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'remove.db'
+            store=Store(path)
+            store.register_task(1,'litter box',123)
+            store.remove_task_type(1,'litter box',123,['litter box'])
+            store.db.close()
+            store=Store(path)
+            try:
+                self.assertTrue(store.is_task_removed(1,'litter box'))
+                self.assertFalse(store.is_task_removed(2,'litter box'))
+                self.assertEqual(store.tasks(1),[])
+                self.assertTrue(store.register_task(1,'litter box',456))
+                self.assertFalse(store.is_task_removed(1,'litter box'))
+                self.assertEqual(store.task_creator(1,'litter box'),456)
+            finally:
+                store.db.close()
+
     def test_ledger_version_changes_on_add_and_undo(self):
         store=Store(':memory:')
         self.addCleanup(store.db.close)
