@@ -50,7 +50,7 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_required_commands_are_registered_and_server_only(self):
         self.assertEqual({c.name for c in bot.tree.get_commands()},
-                         {'spin','tally','log','expense','owe','settle','undo'})
+                         {'add-task','spin','tally','log','expense','owe','settle','undo'})
         self.assertTrue(all(c.guild_only for c in bot.tree.get_commands()))
         self.assertIsNone(bot.tree.get_command("demo-seed"))
 
@@ -389,6 +389,63 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         bot.store.add(10,'drive',1,'Old Ana')
         with patch.object(bot.client,'get_channel',return_value=self.channel):
             self.assertEqual(bot.default_people(100,10,'drive',{1:'Ana'}),{1:'Ana',2:'Ben',3:'Cal'})
+
+    async def test_add_task_registers_without_a_fake_completion(self):
+        self.channel.members=[self.ana,self.ben,NS(id=99,display_name='Rotater',bot=True)]
+        interaction=self.interaction(self.ana)
+        await bot.add_task.callback(interaction,'  Litter   Box  ')
+        self.assertIn('litter box',bot.store.tasks(10))
+        self.assertEqual(bot.store.events(10,'litter box'),[])
+        self.assertEqual(bot.store.task_people(10,'litter box'),{1:'Ana',2:'Ben'})
+        self.assertIn('Added task type **litter box**',interaction.followup.send.call_args.args[0])
+        choices=await bot.task_autocomplete(interaction,'litter')
+        self.assertEqual([choice.value for choice in choices],['litter box'])
+
+    async def test_added_task_works_in_chat_and_tally_before_and_after_a_turn(self):
+        self.channel.members=[self.ana,self.ben]
+        interaction=self.interaction(self.ana)
+        await bot.add_task.callback(interaction,'litter box')
+        await bot.tally.callback(interaction,'litter box')
+        text=interaction.response.send_message.call_args.kwargs['embed'].description
+        self.assertIn('no completed turns yet',text)
+        msg=self.message(self.ana,'I did the litter box')
+        await bot.on_message(msg)
+        msg.add_reaction.assert_awaited_once_with('📝')
+        self.assertEqual(len(bot.store.events(10,'litter box')),1)
+        self.assertEqual(bot.task_standings(10,'litter box')[0].name,'Ben')
+
+    async def test_added_task_works_for_present_tense_chat(self):
+        await bot.add_task.callback(self.interaction(self.ana),'litter box')
+        msg=self.message(self.ana,'im handling the litter box today')
+        await bot.on_message(msg)
+        self.assertEqual(bot.store.events(10,'litter box')[0].source,'chat-active')
+        msg.add_reaction.assert_awaited_once_with('📝')
+
+    async def test_add_task_duplicate_does_not_reset_existing_history(self):
+        bot.store.add(10,'litter box',2,'Ben')
+        interaction=self.interaction(self.ana)
+        await bot.add_task.callback(interaction,'LITTER BOX')
+        self.assertEqual(len(bot.store.events(10,'litter box')),1)
+        self.assertIn('already tracked',interaction.response.send_message.call_args.args[0])
+        interaction.followup.send.assert_not_awaited()
+
+    async def test_add_task_deduplicates_builtin_aliases_and_validates_names(self):
+        await bot.add_task.callback(self.interaction(self.ana),'cook')
+        self.assertEqual(bot.tracked_tasks(10),['cooking'])
+        interaction=self.interaction(self.ana)
+        await bot.add_task.callback(interaction,'cooking')
+        self.assertIn('already tracked',interaction.response.send_message.call_args.args[0])
+        for name in ('   ','x'*41):
+            with self.assertRaises(ValueError):
+                await bot.add_task.callback(self.interaction(self.ana),name)
+
+    async def test_new_task_types_are_isolated_by_server(self):
+        await bot.add_task.callback(self.interaction(self.ana),'litter box')
+        self.assertEqual(bot.store.tasks(20),[])
+        other=self.interaction(self.ana)
+        other.guild_id=20
+        choices=await bot.task_autocomplete(other,'litter')
+        self.assertEqual(choices,[])
 
     async def test_chat_records_explicit_past_time(self):
         msg = self.message(self.ana, 'I drove last night')

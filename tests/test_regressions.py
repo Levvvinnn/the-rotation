@@ -165,6 +165,24 @@ class RegressionTest(unittest.TestCase):
             finally:
                 store.db.close()
 
+    def test_registered_task_survives_reopen_without_participants_or_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'tasks.db'
+            store=Store(path)
+            self.assertTrue(store.register_task(1,'Litter Box',123))
+            self.assertFalse(store.register_task(1,'litter box',456))
+            store.db.close()
+            store=Store(path)
+            try:
+                self.assertEqual(store.tasks(1),['litter box'])
+                self.assertEqual(store.tasks(2),[])
+                self.assertEqual(store.events(1,'litter box'),[])
+                self.assertEqual(store.task_people(1,'litter box'),{})
+                store.clear_task(1,'litter box')
+                self.assertEqual(store.tasks(1),[])
+            finally:
+                store.db.close()
+
     def test_ledger_version_changes_on_add_and_undo(self):
         store=Store(':memory:')
         self.addCleanup(store.db.close)

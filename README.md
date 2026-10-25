@@ -62,6 +62,7 @@ Say **“paid you back @Ana”**, **“venmo'd you $20 @Ana”**, or reply to An
 
 | Command | Use |
 | --- | --- |
+| `/add-task name` | Register a new task type for this server, using this chat's humans as participants |
 | `/spin task [choose_people]` | Spin using everyone in this chat; `choose_people:true` opens a picker with their names |
 | `/tally [task]` | Show who is next for every task; optionally inspect one task with odds and history |
 | `/log task [who]` | Record a turn; defaults to yourself |
@@ -69,6 +70,8 @@ Say **“paid you back @Ana”**, **“venmo'd you $20 @Ana”**, or reply to An
 | `/owe` | Show the minimum-payment plan and settlement buttons |
 | `/settle who [amount]` | Record your full suggested repayment or a partial amount |
 | `/undo` | Remove the most recently recorded turn/payment; logger or server manager only |
+
+Add a custom type with `/add-task name:litter box`. It appears in task autocomplete and `/tally` immediately, with no completed turn invented. Use `/spin task:litter box`, `/log task:litter box`, or say “I did the litter box” / “im handling the litter box today”. Task types persist across restarts, are separate for each server, and duplicate names keep existing history intact.
 
 There are no numbered friend fields. `/spin task:cooking` uses the group automatically. With `choose_people:true`, the private picker starts with everyone selected, lets you toggle actual names, and has page buttons for groups larger than 25. Only the command caller can use that picker. Expense splits always include the payer.
 

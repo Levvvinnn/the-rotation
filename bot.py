@@ -476,8 +476,29 @@ async def command_error(interaction: discord.Interaction, error: app_commands.Ap
 
 
 async def task_autocomplete(interaction: discord.Interaction, current: str):
-    names = sorted(set(tracked_tasks(interaction.guild_id)) | set(TASKS))
+    registered = tracked_tasks(interaction.guild_id)
+    names = registered + sorted(set(TASKS) - set(registered))
     return [app_commands.Choice(name=n, value=n) for n in names if current.lower() in n][:25]
+
+
+@tree.command(name="add-task", description="Add a task type for this server's rotation")
+@app_commands.guild_only()
+@app_commands.describe(name="New task type, such as litter box or car wash")
+async def add_task(interaction: discord.Interaction, name: str):
+    task = normalize_task(name)
+    label = discord.utils.escape_markdown(task)
+    if task in tracked_tasks(interaction.guild_id):
+        await interaction.response.send_message(f"**{label}** is already tracked. Use `/spin task:{task}` or `/tally task:{task}`.",
+                                                ephemeral=True)
+        return
+    await interaction.response.defer()
+    people = await load_channel_people(interaction.channel, interaction.user)
+    if not store.register_task(interaction.guild_id, task, interaction.user.id):
+        await interaction.followup.send(f"**{label}** is already tracked.", ephemeral=True)
+        return
+    store.add_task_people(interaction.guild_id, task, people)
+    await interaction.followup.send(f"✅ Added task type **{label}** for {len(people)} people in this chat.\n"
+                                    f"Use `/spin task:{task}`, or say **I did the {label}** to log a turn.")
 
 
 @tree.command(name="spin", description="Spin for a task using the people in this chat")

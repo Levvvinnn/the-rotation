@@ -69,6 +69,9 @@ class Store:
             CREATE INDEX IF NOT EXISTS events_message ON events(message_id);
             CREATE INDEX IF NOT EXISTS expenses_guild ON expenses(guild_id);
             CREATE INDEX IF NOT EXISTS shares_expense ON shares(expense_id);
+            CREATE TABLE IF NOT EXISTS task_types (
+                guild_id INTEGER NOT NULL, task TEXT NOT NULL, created_by INTEGER NOT NULL, created_at REAL NOT NULL,
+                PRIMARY KEY(guild_id, task));
             CREATE TABLE IF NOT EXISTS task_people (
                 guild_id INTEGER NOT NULL, task TEXT NOT NULL, user_id INTEGER NOT NULL, user_name TEXT NOT NULL,
                 PRIMARY KEY(guild_id, task, user_id));
@@ -105,6 +108,13 @@ class Store:
     def recent_people(self, channel_id: int, since: float) -> dict[int, str]:
         return dict(self.db.execute("SELECT user_id, user_name FROM speakers WHERE channel_id = ? AND ts >= ?",
                                     (channel_id, since)))
+
+    def register_task(self, guild_id: int, task: str, created_by: int) -> bool:
+        task = " ".join(task.lower().split())
+        with self.db:
+            cur = self.db.execute("INSERT OR IGNORE INTO task_types VALUES (?,?,?,?)",
+                                  (guild_id, task, created_by, time.time()))
+        return bool(cur.rowcount)
 
     def task_people(self, guild_id: int, task: str) -> dict[int, str]:
         return dict(self.db.execute("SELECT user_id, user_name FROM task_people WHERE guild_id = ? AND task = ?",
@@ -145,13 +155,15 @@ class Store:
         return [Event(*r) for r in rows]
 
     def tasks(self, guild_id: int) -> list[str]:
-        rows = self.db.execute("SELECT task FROM events WHERE guild_id = ? UNION SELECT task FROM task_people WHERE guild_id = ? ORDER BY task",
-                               (guild_id, guild_id)).fetchall()
+        rows = self.db.execute("SELECT task FROM events WHERE guild_id = ? UNION SELECT task FROM task_people WHERE guild_id = ? "
+                               "UNION SELECT task FROM task_types WHERE guild_id = ? ORDER BY task",
+                               (guild_id, guild_id, guild_id)).fetchall()
         return [r[0] for r in rows]
 
     def clear_task(self, guild_id: int, task: str) -> None:
         self.db.execute("DELETE FROM events WHERE guild_id = ? AND task = ?", (guild_id, task.lower()))
         self.db.execute("DELETE FROM task_people WHERE guild_id = ? AND task = ?", (guild_id, task.lower()))
+        self.db.execute("DELETE FROM task_types WHERE guild_id = ? AND task = ?", (guild_id, task.lower()))
         self.db.commit()
 
     # ----- money -----
